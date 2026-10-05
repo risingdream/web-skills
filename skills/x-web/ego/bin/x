@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# x — Ego Lite 경유 X 검색/스레드 CLI.
+#   x "질의" | x --max 5 --tab top "질의" | x --thread URL
+set -u
+SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MAX="20"; TAB="live"; THREAD=""
+PARTS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --max) MAX="$2"; shift 2 ;;
+    --tab) TAB="$2"; shift 2 ;;
+    --thread) THREAD="$2"; shift 2 ;;
+    --) shift; while [[ $# -gt 0 ]]; do PARTS+=("$1"); shift; done ;;
+    -*) echo "unknown flag: $1" >&2; exit 2 ;;
+    *) PARTS+=("$1"); shift ;;
+  esac
+done
+if [[ -n "$THREAD" ]]; then
+  printf '%s' "$THREAD" > /tmp/x-url.txt
+  ego-browser nodejs < "$SKILL_DIR/tools/thread.js" 2>&1
+  exit $?
+fi
+if [[ ${#PARTS[@]} -eq 0 ]]; then
+  if [[ ! -t 0 ]]; then PARTS=("$(cat)"); else
+    echo 'usage: x [--max N] [--tab live|top] "질의" | x --thread URL' >&2; exit 2
+  fi
+fi
+printf '%s' "${PARTS[*]}" > /tmp/x-query.txt
+printf '%s' "$MAX" > /tmp/x-max.txt
+printf '%s' "$TAB" > /tmp/x-tab.txt
+ego-browser nodejs < "$SKILL_DIR/tools/search.js" 2>&1

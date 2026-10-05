@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# yt — 유튜브 메타데이터/검색/자막 CLI.
+#   yt --meta URL | yt [--max N] "질의" | yt --transcript URL [--lang ko]
+set -u
+SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MAX="10"; META=""; TR=""; LANG="ko"
+PARTS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --max) MAX="$2"; shift 2 ;;
+    --meta) META="$2"; shift 2 ;;
+    --transcript) TR="$2"; shift 2 ;;
+    --lang) LANG="$2"; shift 2 ;;
+    --) shift; while [[ $# -gt 0 ]]; do PARTS+=("$1"); shift; done ;;
+    -*) echo "unknown flag: $1" >&2; exit 2 ;;
+    *) PARTS+=("$1"); shift ;;
+  esac
+done
+if [[ -n "$TR" ]]; then
+  node "$SKILL_DIR/tools/transcript.js" "$TR" "$LANG" /tmp/yt-subs 2>&1
+  exit $?
+fi
+if [[ -n "$META" ]]; then
+  printf '%s' "$META" > /tmp/yt-url.txt
+  ego-browser nodejs < "$SKILL_DIR/tools/meta.js" 2>&1
+  exit $?
+fi
+if [[ ${#PARTS[@]} -eq 0 ]]; then
+  if [[ ! -t 0 ]]; then PARTS=("$(cat)"); else
+    echo 'usage: yt --meta URL | yt [--max N] "질의" | yt --transcript URL [--lang ko]' >&2; exit 2
+  fi
+fi
+printf '%s' "${PARTS[*]}" > /tmp/yt-query.txt
+printf '%s' "$MAX" > /tmp/yt-max.txt
+ego-browser nodejs < "$SKILL_DIR/tools/search.js" 2>&1

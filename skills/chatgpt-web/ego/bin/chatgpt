@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# chatgpt — Ego Lite(chatgpt-web Space) 경유 ChatGPT 웹 브리지 CLI.
+# 사용:
+#   chatgpt "질문"                                   # 새 채팅 (default 세션 갱신)
+#   chatgpt --new "질문"                             # 새 채팅 (명시)
+#   chatgpt --continue "후속 질문"                   # default 세션 이어받기
+#   chatgpt --session tax "질문"                     # tax 세션에 새 채팅
+#   chatgpt --session tax --continue "후속 질문"     # tax 세션 이어받기
+#   chatgpt --model "GPT-5.5" "질문"                 # 모델 지정 후 새 채팅
+#   chatgpt --file report.pdf "이 파일 요약해줘"     # 파일 첨부 (반복 가능)
+set -u
+
+SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SESSIONS="$SKILL_DIR/sessions.json"
+SESSION="default"
+MODE="new"
+MODEL=""
+FILES=()
+PROMPT_PARTS=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --session) SESSION="$2"; shift 2 ;;
+    --continue) MODE="continue"; shift ;;
+    --new) MODE="new"; shift ;;
+    --model) MODEL="$2"; shift 2 ;;
+    --file) FILES+=("$2"); shift 2 ;;
+    --timeout) printf '%s' "$2" > /tmp/chatgpt-timeout.txt; shift 2 ;;
+    --download)
+      DOWNLOAD_DIR="${2:-/tmp/chatgpt-downloads}"
+      case "$DOWNLOAD_DIR" in -*) DOWNLOAD_DIR="/tmp/chatgpt-downloads" ;; *) shift ;; esac
+      URL="$(python3 -c "import json;print(json.load(open('$SESSIONS')).get('$SESSION',''))")"
+      if [[ -z "$URL" ]]; then echo "no saved session '$SESSION' (sessions.json)" >&2; exit 1; fi
+      printf '%s' "$URL" > /tmp/chatgpt-url.txt
+      printf '%s' "$DOWNLOAD_DIR" > /tmp/chatgpt-downdir.txt
+      mkdir -p "$DOWNLOAD_DIR"
+      ego-browser nodejs < "$SKILL_DIR/tools/download.js" || exit 1
+      exit 0 ;;
+    --) shift; while [[ $# -gt 0 ]]; do PROMPT_PARTS+=("$1"); shift; done ;;
+    -*) echo "unknown flag: $1" >&2; exit 2 ;;
+    *) PROMPT_PARTS+=("$1"); shift ;;
+  esac
+done
+
+if [[ ${#PROMPT_PARTS[@]} -eq 0 ]]; then
+  if [[ ! -t 0 ]]; then PROMPT_PARTS=("$(cat)"); else
+    echo "usage: chatgpt [--session NAME] [--continue] [--model NAME] [--file PATH]... [--timeout SEC] \"질문\"" >&2; exit 2
+  fi
+fi
+PROMPT="${PROMPT_PARTS[*]}"
+printf '%s' "$PROMPT" > /tmp/chatgpt-prompt.txt
+
+if [[ ! -f "$SESSIONS" ]]; then printf '{}' > "$SESSIONS"; fi
+
+if [[ -n "$MODEL" ]]; then
+  printf '%s' "$MODEL" > /tmp/chatgpt-model.txt
+  ego-browser nodejs < "$SKILL_DIR/tools/select-model.js" || exit 1
+fi
+
+if [[ "$MODE" == "continue" ]]; then
+  URL="$(python3 -c "import json;print(json.load(open('$SESSIONS')).get('$SESSION',''))")"
+  if [[ -z "$URL" ]]; then echo "no saved session '$SESSION' (sessions.json)" >&2; exit 1; fi
+  printf '%s' "$URL" > /tmp/chatgpt-url.txt
+  ego-browser nodejs < "$SKILL_DIR/tools/continue.js" || exit 1
+else
+  if [[ ${#FILES[@]} -gt 0 ]]; then
+    : > /tmp/chatgpt-files.txt
+    for f in "${FILES[@]}"; do
+      [[ -f "$f" ]] || { echo "file not found: $f" >&2; exit 1; }
+      case "$f" in
+        /*) printf '%s\n' "$f" >> /tmp/chatgpt-files.txt ;;
+        *) printf '%s\n' "$PWD/$f" >> /tmp/chatgpt-files.txt ;;
+      esac
+    done
+  else
+    rm -f /tmp/chatgpt-files.txt
+  fi
+  OUT="$(ego-browser nodejs < "$SKILL_DIR/tools/ask.js" 2>&1)" || { echo "$OUT" >&2; exit 1; }
+  echo "$OUT"
+  NEW_URL="$(printf '%s' "$OUT" | python3 -c "import json,sys; s=sys.stdin.read(); s=s[s.find('{'):s.rfind('}')+1]; print(json.loads(s).get('url','') if s else '')")"
+  if [[ -n "$NEW_URL" ]]; then
+    python3 - "$SESSIONS" "$SESSION" "$NEW_URL" <<'EOF'
+import json, sys
+path, name, url = sys.argv[1], sys.argv[2], sys.argv[3]
+try: data = json.load(open(path))
+except Exception: data = {}
+data[name] = url
+json.dump(data, open(path, "w"), ensure_ascii=False, indent=2)
+EOF
+  fi
+fi

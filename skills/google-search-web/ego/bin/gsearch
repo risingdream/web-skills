@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# gsearch — Ego Lite 경유 구글 검색 CLI.
+#   gsearch "질의" | gsearch --max 5 "질의" | echo ".." | gsearch
+set -u
+SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MAX="10"
+PARTS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --max) MAX="$2"; shift 2 ;;
+    --) shift; while [[ $# -gt 0 ]]; do PARTS+=("$1"); shift; done ;;
+    -*) echo "unknown flag: $1" >&2; exit 2 ;;
+    *) PARTS+=("$1"); shift ;;
+  esac
+done
+if [[ ${#PARTS[@]} -eq 0 ]]; then
+  if [[ ! -t 0 ]]; then PARTS=("$(cat)"); else
+    echo 'usage: gsearch [--max N] "질의"' >&2; exit 2
+  fi
+fi
+printf '%s' "${PARTS[*]}" > /tmp/gsearch-query.txt
+printf '%s' "$MAX" > /tmp/gsearch-max.txt
+ego-browser nodejs < "$SKILL_DIR/tools/search.js" 2>&1

@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# arxiv — arXiv 검색/PDF CLI.
+#   arxiv "질의" | arxiv --max 5 --sort new "질의" | arxiv --pdf ID [dir]
+set -u
+SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MAX="10"; SORT="relevance"; PDF=""; DIR="/tmp/arxiv-pdfs"
+PARTS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --max) MAX="$2"; shift 2 ;;
+    --sort) SORT="$2"; shift 2 ;;
+    --pdf) PDF="$2"; shift 2 ;;
+    --) shift; while [[ $# -gt 0 ]]; do PARTS+=("$1"); shift; done ;;
+    -*) echo "unknown flag: $1" >&2; exit 2 ;;
+    *) if [[ "$1" =~ ^[0-9]{4}\.[0-9]+(v[0-9]+)?$ ]] && [[ ${#PARTS[@]} -eq 0 ]]; then PDF="$1"; shift
+       else PARTS+=("$1"); shift; fi ;;
+  esac
+done
+if [[ -n "$PDF" ]]; then
+  case "${1:-}" in ""| -*) ;; *) DIR="$1" ;; esac
+  mkdir -p "$DIR"
+  curl -fsSL -A "arxiv-search-web/1.0" -o "$DIR/$PDF.pdf" "https://arxiv.org/pdf/$PDF" \
+    && echo "$DIR/$PDF.pdf" || { echo "pdf download failed: $PDF" >&2; exit 1; }
+  exit 0
+fi
+if [[ ${#PARTS[@]} -eq 0 ]]; then
+  if [[ ! -t 0 ]]; then PARTS=("$(cat)"); else
+    echo 'usage: arxiv [--max N] [--sort relevance|new] "질의" | arxiv --pdf ID [dir]' >&2; exit 2
+  fi
+fi
+python3 "$SKILL_DIR/tools/search.py" "${PARTS[*]}" --max "$MAX" --sort "$SORT"
